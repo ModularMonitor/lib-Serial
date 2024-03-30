@@ -240,7 +240,8 @@ inline void post(const char* path, const float val) {
 inline bool read(SerialPackage& pkg)
 {
 	const int to_read = Serial.available();
-	if (to_read < sizeof(SerialPackage)) return false;
+	if (to_read < 0) return false;
+	if (static_cast<unsigned>(to_read) < sizeof(SerialPackage)) return false;
 	Serial.readBytes(pkg.get_data(), pkg.get_size());
 	return true;
 }
