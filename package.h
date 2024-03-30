@@ -207,7 +207,8 @@ struct SerialPackage {
 		} m_data;
 
 		void _cpystr(const char* s) {
-			if (const auto len = strlen(s); len < package_path_size - 1) {
+			const auto len = strlen(s);
+			if (len < package_path_size - 1) {
 				memcpy(m_path, s, len);
 				m_path[len] = '\0';
 			}
