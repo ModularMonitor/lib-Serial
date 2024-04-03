@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <deque>
 #include <memory>
+#include <mutex>
 
 namespace MMSerial {
 
@@ -12,9 +13,9 @@ namespace MMSerial {
 	constexpr auto package_path_size = 1 << 6;
 
 	// using 10000 hz should be fast enough
-	constexpr int lane_signal = 3; // send pulse for interrupt
+	constexpr int lane_signal = 2; // send pulse for interrupt
 	constexpr int lane_data = 4; // send data each pulse
-	constexpr decltype(micros()) lane_data_interval = 500; // us
+	constexpr decltype(micros()) lane_data_interval = 50000; // us
 
 	enum class data_type : uint8_t { T_UNKNOWN, T_REQUESTONLY, T_F, T_D, T_I, T_U };
 
@@ -34,7 +35,7 @@ namespace MMSerial {
 			__(double a) : d(a) {}
 			__(int64_t a) : i(a) {}
 			__(uint64_t a) : u(a) {}
-		} value{0LL};
+		} value{ 0LL };
 
 		void _cpystr(const char* s) {
 			const auto len = strlen(s);
@@ -66,50 +67,51 @@ namespace MMSerial {
 		decltype(micros()) last_read = 0;
 		size_t bit_offset = 0;
 		std::deque<std::unique_ptr<data>> seq;
+
+		std::mutex sync_mng;
+		char raw_data[sizeof(data)];
+		size_t raw_data_off_bit = 0; // max 8 * sizeof(data)
+
 		uint16_t own_id = 0; // MASK, 0 = master, reads everyone, default: only read their ID
 
-		void push_bit(bool bit) {
-			// be sure to not get broken packages. Skip if in the middle of one (like on startup)
-			if (bit_offset == 0 && micros() - last_read < lane_data_interval) {
-				last_read = micros();
-				return;
-			}
+		void push_bit(bool bb) {
+			if (raw_data_off_bit >= sizeof(data) * 8) return; // lost package
 
-			last_read = micros();
-			if (bit_offset == 0) seq.push_back(std::unique_ptr<data>(new data()));
+			const size_t bit = raw_data_off_bit % 8;
+			const size_t byte = raw_data_off_bit / 8;
+			++raw_data_off_bit;
 
-			const auto* targ_real = seq.back().get();
-			uint8_t* targ = (uint8_t*)targ_real;
+			raw_data[byte] = (raw_data[byte] & ~(1 << bit)) | (bb ? (1 << bit) : 0);
+		}
 
-			const size_t pi = bit_offset / 8;
-			const size_t pbf = bit_offset % 8;
+		// for better results, call it at least once each 'lane_data_interval' us. Best if twice.
+		void check_and_push_internal_mem()
+		{
+			if (raw_data_off_bit >= sizeof(data) * 8) { // has data
+				std::lock_guard<std::mutex> l(sync_mng);
 
-			targ[pi] = (targ[pi] & ~(1 << pbf)) | (bit ? (1 << pbf) : 0);
-
-			if (bit_offset == (sizeof(targ_real->recvd_id) + sizeof(targ_real->type))) { // got number and command already, can check mask
+				data* targ_real = (data*)raw_data;
 				if (
-					!( /* erase if not */
 					/* receive only command targeted if not master and it's request */
-					(targ_real->recvd_id == own_id && targ_real->type == static_cast<uint8_t>(data_type::T_REQUESTONLY)) 
+					(targ_real->recvd_id == own_id && targ_real->type == static_cast<uint8_t>(data_type::T_REQUESTONLY))
 					||
 					/* or when master, allow recv data from others (not request) */
 					(own_id == 0 && targ_real->type != static_cast<uint8_t>(data_type::T_REQUESTONLY))
 					)
-				)
 				{
-					seq.pop_back(); // free up
-					//last_read = micros(); // ignore package
-					bit_offset = 0; // wait next at 0
-					return;
+					auto ndata = std::unique_ptr<data>(new data());
+					memcpy(ndata.get(), targ_real, sizeof(data));
+					seq.push_back(std::move(ndata));
+					memset(raw_data, '\0', sizeof(raw_data));
+					raw_data_off_bit = 0;
 				}
 			}
-
-			if (++bit_offset >= sizeof(data) * 8) bit_offset = 0;
 		}
 
 		std::unique_ptr<data> pop()
 		{
 			if (seq.size() > 1 || (seq.size() > 0 && bit_offset == 0)) {
+				std::lock_guard<std::mutex> l(sync_mng);
 				std::unique_ptr<data> ptr = std::move(*seq.begin());
 				seq.pop_front();
 				return ptr;
@@ -118,7 +120,10 @@ namespace MMSerial {
 		}
 	};
 
-	inline ctl _g_ctl;
+	inline ctl& _g_ctl_get() {
+		static ctl _g_ctl;
+		return _g_ctl;
+	}
 
 	inline void _sendBit(bool bit)
 	{
@@ -139,45 +144,63 @@ namespace MMSerial {
 	// triggered on lane_signal -> 1
 	inline void _i_readBit()
 	{
-		_g_ctl.push_bit(digitalRead(lane_data));
+		_g_ctl_get().push_bit(digitalRead(lane_data));
 	}
 
 	inline void _sendData(uint8_t* data, size_t len)
 	{
-#ifndef _DEBUG
 		detachInterrupt(digitalPinToInterrupt(lane_signal));
-#endif
 
 		while (len-- > 0) _sendByte(*data++);
 
-		delayMicroseconds(500); // hold 500 for sync
-
-#ifndef _DEBUG
 		attachInterrupt(digitalPinToInterrupt(lane_signal), _i_readBit, RISING);
-#endif
+
+		delayMicroseconds(lane_data_interval); // hold for sync
+	}
+
+	inline void _loop2_mem_check_task(void* p)
+	{
+		while (1) {
+			_g_ctl_get().check_and_push_internal_mem();
+			delayMicroseconds(lane_data_interval / 8);
+		}
 	}
 
 	// User usable:
 
-	template<typename T> 
+	template<typename T>
 	inline void send_package(const char* path, T val)
 	{
+		pinMode(lane_signal, OUTPUT);
+		pinMode(lane_data, OUTPUT);
 		data dat(path, val);
-		dat.recvd_id = _g_ctl.own_id;
+		dat.recvd_id = _g_ctl_get().own_id;
 		_sendData((uint8_t*)&dat, sizeof(dat));
+		pinMode(lane_signal, INPUT);
+		pinMode(lane_data, INPUT);
 	}
 
 	inline void send_request(uint16_t rid)
 	{
+		pinMode(lane_signal, OUTPUT);
+		pinMode(lane_data, OUTPUT);
 		data dat;
 		dat.make_as_request(rid);
 		_sendData((uint8_t*)&dat, sizeof(dat));
+		pinMode(lane_signal, INPUT);
+		pinMode(lane_data, INPUT);
 	}
 
 	inline void setup(uint16_t own_id)
 	{
-		_g_ctl.own_id = own_id;
+		static TaskHandle_t thr_worker;
+		_g_ctl_get().own_id = own_id;
+		pinMode(lane_signal, INPUT);
+		pinMode(lane_data, INPUT);
 		attachInterrupt(digitalPinToInterrupt(lane_signal), _i_readBit, RISING);
+		if (!thr_worker) {
+			xTaskCreate(_loop2_mem_check_task, "MMSASYNC", 2048, nullptr, 0, &thr_worker);
+		}
 	}
 
 	inline void setup(device_id d_id)
@@ -187,6 +210,6 @@ namespace MMSerial {
 
 	inline std::unique_ptr<data> read_data()
 	{
-		return _g_ctl.pop();
+		return _g_ctl_get().pop();
 	}
 }
