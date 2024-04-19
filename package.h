@@ -32,6 +32,7 @@ void on_request_do()
 
 namespace CustomSerial {
 
+	constexpr int default_led_pin = 2;
 	constexpr int default_port_sda = 5;
 	constexpr int default_port_scl = 4;
 	constexpr int port_speed_baud = 40000;
@@ -190,37 +191,87 @@ namespace CustomSerial {
 
 	};
 
+	struct config {
+		void (*request_cb)(void) = nullptr;
+		int led = default_led_pin;
+		bool was_led_on = false;
+	};
+
+	config& _get_config()
+	{
+		static config cfg;
+		return cfg;
+	}
+
+	void _toggle_led()
+	{
+		auto& cfg = _get_config();
+		if (cfg.led >= 0) digitalWrite(cfg.led, cfg.was_led_on = !cfg.was_led_on);
+	}
+
+	void _reset_led()
+	{
+		auto& cfg = _get_config();
+		if (cfg.led >= 0) digitalWrite(cfg.led, cfg.was_led_on = false);
+	}
+
+	void _handle_event()
+	{
+		const auto& cfg = _get_config();
+
+		if (cfg.request_cb == nullptr) return;
+		cfg.request_cb();
+		_toggle_led();
+	}
+
 	void begin_master(const int port_sda = default_port_sda, const int port_scl = default_port_scl)
 	{
+		auto& cfg = _get_config();
+
+		cfg.led = -1;
+
 		Wire1.begin(port_sda, port_scl, port_speed_baud);
 	}
 
-	void begin_slave(uint8_t sid, void(*request_callback)(void), const int port_sda = default_port_sda, const int port_scl = default_port_scl)
+	void begin_slave(uint8_t sid, void(*request_callback)(void), const int port_sda = default_port_sda, const int port_scl = default_port_scl, const int led_pin = default_led_pin)
 	{
+		auto& cfg = _get_config();
+
+		cfg.led = led_pin;
+		cfg.request_cb = request_callback;
+
+		pinMode(cfg.led, OUTPUT);
+
 		Wire1.begin(sid, port_sda, port_scl, port_speed_baud);
-		Wire1.onRequest(request_callback);
+		Wire1.onRequest(_handle_event);
 	}
 
-	void begin_slave(device_id sid, void(*request_callback)(void), const int port_sda = default_port_sda, const int port_scl = default_port_scl)
+	void begin_slave(device_id sid, void(*request_callback)(void), const int port_sda = default_port_sda, const int port_scl = default_port_scl, const int led_pin = default_led_pin)
 	{
+		auto& cfg = _get_config();
+
+		cfg.led = led_pin;
+		cfg.request_cb = request_callback;
+
+		pinMode(cfg.led, OUTPUT);
+
 		Wire1.begin(device_to_uint8t(sid), port_sda, port_scl, port_speed_baud);
-		Wire1.onRequest(request_callback);
+		Wire1.onRequest(_handle_event);
 	}
 
 	void end()
 	{
+		_reset_led();
 		Wire1.end();
 	}
 
 	void request(uint8_t sid)
 	{
-		//delay(50);
 		Wire1.requestFrom(sid, sizeof(command_package), false);
 	}
 
 	void request(device_id sid)
 	{
-		//delay(50);
 		Wire1.requestFrom(static_cast<uint8_t>(sid), sizeof(command_package), false);
 	}
 
