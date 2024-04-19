@@ -1,215 +1,301 @@
+#pragma once
+
 #include <Arduino.h>
+#include <Wire.h>
 #include <deque>
 #include <memory>
 #include <mutex>
 
-namespace MMSerial {
+/*
+How to use it:
 
-	enum class device_id : uint16_t {
-		MASTER = 0,
-		DHT22		/* Paths expected: `/dht22/temperature` [float], `/dht22/humidity` [float] */
+In the setup function, call:
+
+```
+CustomSerial::begin_slave(my_id, on_request_do);
+```
+
+and define the function to answer with something, like:
+
+```
+void on_request_do()
+{  
+  CustomSerial::command_package cmd(my_id, 
+    "/data", 50ULL,
+    "/random_data", 12.456f
+  );
+  
+  CustomSerial::write(cmd);
+}
+```
+*/
+
+namespace CustomSerial {
+
+	constexpr int default_port_sda = 5;
+	constexpr int default_port_scl = 4;
+	constexpr int port_speed_baud = 40000;
+	constexpr size_t max_packages_at_once = 4;
+	
+	enum class device_id : uint8_t {
+		BMP180_SENSOR,	/* Atmosphere pressure sensor */
+		DHT22_SENSOR,	/* Temperature and Humidity sensor */
+		MHZ19B_SENSOR,	/* CO2 sensor based in infra-red */
+		CCS811_SENSOR,	/* Air quality sensor */
+		LDR_MOD,		/* Simple light sensor */
+		SDS011_SENSOR,	/* Particle sensor */
+		KY038_SENSOR,	/* Noise/sound sensor (microphone) */
+		BMI160_SENSOR,	/* Gyro 6 axis sensor */
+		BATTERY_SENSOR, /* Own battery reporting sensor */
+		_MAX			/* MAX to limit testing of devices */
 	};
+	
+	constexpr uint8_t device_to_uint8t(device_id id) { return static_cast<uint8_t>(id); }
 
-	constexpr auto package_path_size = 1 << 6;
+	struct devices_online {
+		bool m_by_id[static_cast<size_t>(device_id::_MAX)]{false};
+		bool m_was_checked = false;
 
-	// using 10000 hz should be fast enough
-	constexpr int lane_signal = 2; // send pulse for interrupt
-	constexpr int lane_data = 4; // send data each pulse
-	constexpr decltype(micros()) lane_data_interval = 50000; // us
+		bool has_checked_once() const { return m_was_checked; }
+		void set_checked() { m_was_checked = true; }
 
-	enum class data_type : uint8_t { T_UNKNOWN, T_REQUESTONLY, T_F, T_D, T_I, T_U };
+		void set_online(device_id id, bool answered) {
+			m_by_id[device_to_uint8t(id)] = answered;
+		}
+		void set_online(uint8_t id, bool answered) {
+			m_by_id[id] = answered;
+		}
+		bool is_online(device_id id) const {
+			return m_by_id[device_to_uint8t(id)];
+		}
+		bool is_online(uint8_t id) const {
+			return m_by_id[id];
+		}
 
-	struct data {
+		bool has_any_online() const {
+			for (uint8_t p = 0; p < device_to_uint8t(device_id::_MAX); ++p) {
+				if (m_by_id[p] == true) return true;
+			}
+			return false;
+		}
+	};	
 
-		uint16_t recvd_id = 0; // MUST BE FIRST
+	struct command {
+		enum class vtype : uint8_t { INVALID, TD, TF, TI, TU, REQUEST = std::numeric_limits<uint8_t>::max() };
 
-		uint8_t type = static_cast<uint8_t>(data_type::T_UNKNOWN);
-		char path[package_path_size]{};
-		union __ {
-			float f;
+		union _ {
 			double d;
+			float f;
 			int64_t i;
 			uint64_t u;
-			__() = default;
-			__(float a) : f(a) {}
-			__(double a) : d(a) {}
-			__(int64_t a) : i(a) {}
-			__(uint64_t a) : u(a) {}
-		} value{ 0LL };
 
-		void _cpystr(const char* s) {
-			const auto len = strlen(s);
-			if (len < package_path_size - 1) { memcpy(path, s, len); path[len] = '\0'; }
-			else { path[0] = '\0'; }
+			_() : d(0.0) {}
+			_(double _d) : d(_d) {}
+			_(float _f) : f(_f) {}
+			_(int64_t _i) : i(_i) {}
+			_(uint64_t _u) : u(_u) {}
+			void operator=(double _d) { d = _d; }
+			void operator=(float _f) { f = _f; }
+			void operator=(int64_t _i) { i = _i; }
+			void operator=(uint64_t _u) { u = _u; }
+		};
+
+	private:
+		char path[16]{};
+		_ m_val{0.0f};
+		uint8_t m_id = 0;
+		uint8_t m_type = static_cast<uint8_t>(vtype::INVALID);
+
+		void _set_val(double _d)   { m_val = _d; m_type = static_cast<uint8_t>(vtype::TD); }
+		void _set_val(float _f)    { m_val = _f; m_type = static_cast<uint8_t>(vtype::TF); }
+		void _set_val(int64_t _i)  { m_val = _i; m_type = static_cast<uint8_t>(vtype::TI); }
+		void _set_val(uint64_t _u) { m_val = _u; m_type = static_cast<uint8_t>(vtype::TU); }
+	public:		
+		command() = default;
+
+		template<typename T>
+		void make_data(uint8_t of, const char* path15, const T& value)
+		{
+			m_id = of;
+			const auto len = strlen(path15);
+			memcpy(path, path15, (len + 1) > 16 ? 16 : len + 1);
+			_set_val(value);
 		}
 
-		data() = default;
-		data(const char* path_, float    val) : type(static_cast<uint8_t>(data_type::T_F)), value(val) { _cpystr(path_); }
-		data(const char* path_, double   val) : type(static_cast<uint8_t>(data_type::T_D)), value(val) { _cpystr(path_); }
-		data(const char* path_, int64_t  val) : type(static_cast<uint8_t>(data_type::T_I)), value(val) { _cpystr(path_); }
-		data(const char* path_, uint64_t val) : type(static_cast<uint8_t>(data_type::T_U)), value(val) { _cpystr(path_); }
-
-		void make_as_request(uint16_t id) {
-			recvd_id = id;
-			type = static_cast<uint8_t>(data_type::T_REQUESTONLY);
-			memset(path, '\0', sizeof(path));
+		template<typename T>
+		void make_data(device_id of, const char* path15, const T& value)
+		{
+			make_data(device_to_uint8t(of), path15, value);
 		}
 
+		device_id get_device_id() const { return static_cast<device_id>(m_id); }
 		const char* get_path() const { return path; }
-		data_type get_type() const { return static_cast<data_type>(type); }
-		float get_as_float() const { return value.f; }
-		double get_as_double() const { return value.d; }
-		int64_t get_as_int() const { return value.i; }
-		uint64_t get_as_uint() const { return value.u; }
+		const _& get_val() const { return m_val; }
+		vtype get_val_type() const { return static_cast<vtype>(m_type); }
+
+		bool valid() const { return  m_type != static_cast<uint8_t>(vtype::INVALID); }
 	};
 
-	struct ctl {
-		decltype(micros()) last_read = 0;
-		size_t bit_offset = 0;
-		std::deque<std::unique_ptr<data>> seq;
+	struct command_package {
+		command cmd[max_packages_at_once];
+		//uint16_t num_cmds = 0;
+		
+		command_package() = default;
+		command_package(const command_package& c) { memcpy((void*)this, (void*)&c, sizeof(command_package)); }
+		command_package(command_package&& c) { memcpy((void*)this, (void*)&c, sizeof(command_package)); }
+		void operator=(const command_package& c) { memcpy((void*)this, (void*)&c, sizeof(command_package)); }
+		void operator=(command_package&& c) { memcpy((void*)this, (void*)&c, sizeof(command_package)); }
 
-		std::mutex sync_mng;
-		char raw_data[sizeof(data)];
-		size_t raw_data_off_bit = 0; // max 8 * sizeof(data)
-
-		uint16_t own_id = 0; // MASK, 0 = master, reads everyone, default: only read their ID
-
-		void push_bit(bool bb) {
-			if (raw_data_off_bit >= sizeof(data) * 8) return; // lost package
-
-			const size_t bit = raw_data_off_bit % 8;
-			const size_t byte = raw_data_off_bit / 8;
-			++raw_data_off_bit;
-
-			raw_data[byte] = (raw_data[byte] & ~(1 << bit)) | (bb ? (1 << bit) : 0);
-		}
-
-		// for better results, call it at least once each 'lane_data_interval' us. Best if twice.
-		void check_and_push_internal_mem()
+		template<typename T, typename... Args>
+		void _build(device_id sid, const char* path, const T& val, Args... others)
 		{
-			if (raw_data_off_bit >= sizeof(data) * 8) { // has data
-				std::lock_guard<std::mutex> l(sync_mng);
+			constexpr size_t off = sizeof...(others) / 2;
+			static_assert (off < max_packages_at_once, "Can't hold that many info in one package!");
 
-				data* targ_real = (data*)raw_data;
-				if (
-					/* receive only command targeted if not master and it's request */
-					(targ_real->recvd_id == own_id && targ_real->type == static_cast<uint8_t>(data_type::T_REQUESTONLY))
-					||
-					/* or when master, allow recv data from others (not request) */
-					(own_id == 0 && targ_real->type != static_cast<uint8_t>(data_type::T_REQUESTONLY))
-					)
-				{
-					auto ndata = std::unique_ptr<data>(new data());
-					memcpy(ndata.get(), targ_real, sizeof(data));
-					seq.push_back(std::move(ndata));
-					memset(raw_data, '\0', sizeof(raw_data));
-					raw_data_off_bit = 0;
-				}
-			}
+			cmd[off].make_data(sid, path, val);
+			_build(sid, others...);
 		}
-
-		std::unique_ptr<data> pop()
+		template<typename T>
+		void _build(device_id sid, const char* path, const T& val)
 		{
-			if (seq.size() > 1 || (seq.size() > 0 && bit_offset == 0)) {
-				std::lock_guard<std::mutex> l(sync_mng);
-				std::unique_ptr<data> ptr = std::move(*seq.begin());
-				seq.pop_front();
-				return ptr;
-			}
-			return {};
+			cmd[0].make_data(sid, path, val);
 		}
+
+		template<typename T>
+		command_package(device_id sid, const char* path, const T& val)
+		{
+			//num_cmds = 1;
+			_build(sid, path, val);
+		}
+		template<typename T, typename... Args>
+		command_package(device_id sid, const char* path, const T& val, Args... others)
+		{
+			//num_cmds = 1 + (sizeof...(others) / 2);
+			_build(sid, path, val, others...);
+		}
+
+		command& idx(const size_t p) {
+			if (p < max_packages_at_once) return cmd[p];
+			throw std::out_of_range("Index must not be bigger than the limit!");
+		}
+
+		const command& idx(const size_t p) const {
+			if (p < max_packages_at_once) return cmd[p];
+			throw std::out_of_range("Index must not be bigger than the limit!");
+		}
+
+		size_t size() const { 
+			for(size_t p = 0; p < max_packages_at_once; p++) {
+				if (!cmd[p].valid()) return p;
+			}
+			return max_packages_at_once;
+		}
+
 	};
 
-	inline ctl& _g_ctl_get() {
-		static ctl _g_ctl;
-		return _g_ctl;
+	void begin_master(const int port_sda = default_port_sda, const int port_scl = default_port_scl)
+	{
+		Wire1.begin(port_sda, port_scl, port_speed_baud);
 	}
 
-	inline void _sendBit(bool bit)
+	void begin_slave(uint8_t sid, void(*request_callback)(void), const int port_sda = default_port_sda, const int port_scl = default_port_scl)
 	{
-		digitalWrite(lane_data, bit); // based on random ppl, < 20 us
-		delayMicroseconds(20);
-		digitalWrite(lane_signal, 1); // based on random ppl, < 20 us
-		delayMicroseconds(20);
-		digitalWrite(lane_signal, 0); // based on random ppl, < 20 us
+		Wire1.begin(sid, port_sda, port_scl, port_speed_baud);
+		Wire1.onRequest(request_callback);
 	}
 
-	inline void _sendByte(uint8_t v)
+	void begin_slave(device_id sid, void(*request_callback)(void), const int port_sda = default_port_sda, const int port_scl = default_port_scl)
 	{
-
-		for (size_t p = 0; p < 8; ++p)
-			_sendBit((v >> p) & 1);
+		Wire1.begin(device_to_uint8t(sid), port_sda, port_scl, port_speed_baud);
+		Wire1.onRequest(request_callback);
 	}
 
-	// triggered on lane_signal -> 1
-	inline void _i_readBit()
+	void end()
 	{
-		_g_ctl_get().push_bit(digitalRead(lane_data));
+		Wire1.end();
 	}
 
-	inline void _sendData(uint8_t* data, size_t len)
+	void request(uint8_t sid)
 	{
-		detachInterrupt(digitalPinToInterrupt(lane_signal));
-
-		while (len-- > 0) _sendByte(*data++);
-
-		attachInterrupt(digitalPinToInterrupt(lane_signal), _i_readBit, RISING);
-
-		delayMicroseconds(lane_data_interval); // hold for sync
+		//delay(50);
+		Wire1.requestFrom(sid, sizeof(command_package), false);
 	}
 
-	inline void _loop2_mem_check_task(void* p)
+	void request(device_id sid)
 	{
-		while (1) {
-			_g_ctl_get().check_and_push_internal_mem();
-			delayMicroseconds(lane_data_interval / 8);
+		//delay(50);
+		Wire1.requestFrom(static_cast<uint8_t>(sid), sizeof(command_package), false);
+	}
+
+	bool read(command_package& o)
+	{
+		if (Wire1.available() < sizeof(command_package)) return false;
+		Wire1.readBytes((uint8_t*)&o, sizeof(command_package));
+		return true;
+	}
+
+	void write(const command_package& o)
+	{
+		Wire1.write((uint8_t*)&o, sizeof(command_package));
+	}
+
+	devices_online& get_devices_list() 
+	{
+		static devices_online dev;
+		return dev;
+	}
+
+	void check_all_devices_online()
+	{
+		auto& dl = get_devices_list();
+		constexpr uint8_t max_item = device_to_uint8t(device_id::_MAX);
+
+		for(uint8_t p = 0; p < max_item; ++p) {
+			command_package cmd;
+			request(p);
+			dl.set_online(p, read(cmd) && cmd.size() > 0);
 		}
+
+		dl.set_checked();
 	}
 
-	// User usable:
-
-	template<typename T>
-	inline void send_package(const char* path, T val)
+	void check_devices_online_if_not_checked()
 	{
-		pinMode(lane_signal, OUTPUT);
-		pinMode(lane_data, OUTPUT);
-		data dat(path, val);
-		dat.recvd_id = _g_ctl_get().own_id;
-		_sendData((uint8_t*)&dat, sizeof(dat));
-		pinMode(lane_signal, INPUT);
-		pinMode(lane_data, INPUT);
+		const auto& dl = get_devices_list();
+		if (!dl.has_checked_once()) check_all_devices_online();
 	}
 
-	inline void send_request(uint16_t rid)
+	uint8_t get_devices_limit()
 	{
-		pinMode(lane_signal, OUTPUT);
-		pinMode(lane_data, OUTPUT);
-		data dat;
-		dat.make_as_request(rid);
-		_sendData((uint8_t*)&dat, sizeof(dat));
-		pinMode(lane_signal, INPUT);
-		pinMode(lane_data, INPUT);
+		return device_to_uint8t(device_id::_MAX);
 	}
 
-	inline void setup(uint16_t own_id)
+	void set_pin_to_check_devices(const int port_id)
 	{
-		static TaskHandle_t thr_worker;
-		_g_ctl_get().own_id = own_id;
-		pinMode(lane_signal, INPUT);
-		pinMode(lane_data, INPUT);
-		attachInterrupt(digitalPinToInterrupt(lane_signal), _i_readBit, RISING);
-		if (!thr_worker) {
-			xTaskCreate(_loop2_mem_check_task, "MMSASYNC", 2048, nullptr, 0, &thr_worker);
-		}
+		attachInterrupt(digitalPinToInterrupt(port_id), check_all_devices_online, RISING);
+	}
+	
+	void unset_pin_to_check_devices(const int port_id)
+	{		
+		detachInterrupt(digitalPinToInterrupt(port_id));
 	}
 
-	inline void setup(device_id d_id)
+	bool is_device_connected(device_id id)
 	{
-		setup(static_cast<uint16_t>(d_id));
+		const auto& dl = get_devices_list();
+		return dl.is_online(id);
 	}
 
-	inline std::unique_ptr<data> read_data()
+	bool is_device_connected(uint8_t id)
 	{
-		return _g_ctl_get().pop();
+		const auto& dl = get_devices_list();
+		return dl.is_online(id);
 	}
+
+	bool is_any_device_connected()
+	{
+		const auto& dl = get_devices_list();
+		return dl.has_any_online();
+	}
+
 }
