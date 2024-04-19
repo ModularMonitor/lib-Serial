@@ -38,14 +38,11 @@ namespace CustomSerial {
 	constexpr size_t max_packages_at_once = 4;
 	
 	enum class device_id : uint8_t {
-		BMP180_SENSOR,	/* Atmosphere pressure sensor */
-		DHT22_SENSOR,	/* Temperature and Humidity sensor */
-		MHZ19B_SENSOR,	/* CO2 sensor based in infra-red */
-		CCS811_SENSOR,	/* Air quality sensor */
-		LDR_MOD,		/* Simple light sensor */
-		SDS011_SENSOR,	/* Particle sensor */
-		KY038_SENSOR,	/* Noise/sound sensor (microphone) */
-		BMI160_SENSOR,	/* Gyro 6 axis sensor */
+		BMP180_SENSOR,	 /* Atmosphere pressure sensor */
+		DHT22_SENSOR,	 /* Temperature and Humidity sensor */
+		MICS_6814_SENSOR,/* CO, NH3 and NO2 sensor */
+		PMSDS011_SENSOR, /* Nova PM sensor */
+		
 		BATTERY_SENSOR, /* Own battery reporting sensor */
 		_MAX			/* MAX to limit testing of devices */
 	};
