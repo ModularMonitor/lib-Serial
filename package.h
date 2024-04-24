@@ -36,7 +36,7 @@ namespace CustomSerial {
 	constexpr int default_port_sda = 5;
 	constexpr int default_port_scl = 4;
 	constexpr int port_speed_baud = 40000;
-	constexpr size_t max_packages_at_once = 4;
+	constexpr size_t max_packages_at_once = 16;
 	
 	enum class device_id : uint8_t {
 		BMP180_SENSOR,	   /* Atmosphere pressure sensor */
