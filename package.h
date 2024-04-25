@@ -12,6 +12,8 @@ How to use it:
 In the setup function, call:
 
 ```
+CustomSerial::set_logging(Serial); // optional
+CustomSerial::print_info(); // only prints if above is set
 CustomSerial::begin_slave(my_id, on_request_do);
 ```
 
@@ -32,11 +34,12 @@ void on_request_do()
 
 namespace CustomSerial {
 
+	constexpr char versioning[] = "V1.0.0";
 	constexpr int default_led_pin = 2;
 	constexpr int default_port_sda = 5;
 	constexpr int default_port_scl = 4;
 	constexpr int port_speed_baud = 40000;
-	constexpr size_t max_packages_at_once = 16;
+	constexpr size_t max_packages_at_once = 16;	
 	
 	enum class device_id : uint8_t {
 		DHT22_SENSOR,	   /* Temperature and Humidity sensor */
@@ -196,6 +199,7 @@ namespace CustomSerial {
 		void (*request_cb)(void) = nullptr;
 		int led = default_led_pin;
 		bool was_led_on = false;
+		HardwareSerial* serial = nullptr;
 	};
 
 	config& _get_config()
@@ -224,6 +228,18 @@ namespace CustomSerial {
 		cfg.request_cb();
 		_toggle_led();
 	}
+	
+	template<typename... Args>
+	void _plogf(Args&&... args) {
+		const auto& cfg = _get_config();
+		if (cfg.serial) cfg.serial->printf(args...);
+	}
+	
+	void set_logging(HardwareSerial& serial)
+	{
+		auto& cfg = _get_config();
+		cfg.serial = &serial;
+	}
 
 	void begin_master(const int port_sda = default_port_sda, const int port_scl = default_port_scl)
 	{
@@ -232,6 +248,8 @@ namespace CustomSerial {
 		cfg.led = -1;
 
 		Wire1.begin(port_sda, port_scl, port_speed_baud);
+		
+		_plogf("[CS] Begin as MASTER on Wire1(sda=%i, scl=%i, baud=%i)\n", port_sda, port_scl, port_speed_baud);
 	}
 
 	void begin_slave(uint8_t sid, void(*request_callback)(void), const int port_sda = default_port_sda, const int port_scl = default_port_scl, const int led_pin = default_led_pin)
@@ -245,6 +263,8 @@ namespace CustomSerial {
 
 		Wire1.begin(sid, port_sda, port_scl, port_speed_baud);
 		Wire1.onRequest(_handle_event);
+		
+		_plogf("[CS] Begin as SLAVE(%i) on Wire1(sda=%i, scl=%i, baud=%i) led=%i\n", (int)sid, port_sda, port_scl, port_speed_baud, led_pin);
 	}
 
 	void begin_slave(device_id sid, void(*request_callback)(void), const int port_sda = default_port_sda, const int port_scl = default_port_scl, const int led_pin = default_led_pin)
@@ -258,12 +278,15 @@ namespace CustomSerial {
 
 		Wire1.begin(device_to_uint8t(sid), port_sda, port_scl, port_speed_baud);
 		Wire1.onRequest(_handle_event);
+		
+		_plogf("[CS] Begin as SLAVE(%i) on Wire1(sda=%i, scl=%i, baud=%i) led=%i\n", (int)sid, port_sda, port_scl, port_speed_baud, led_pin);
 	}
 
 	void end()
 	{
 		_reset_led();
 		Wire1.end();
+		_plogf("[CS] Reset call (end)\n");
 	}
 
 	void request(uint8_t sid)
@@ -321,11 +344,13 @@ namespace CustomSerial {
 
 	void set_pin_to_check_devices(const int port_id)
 	{
+		_plogf("[CS] Set pin port %i as RISING to trigger check for new devices\n", port_id);
 		attachInterrupt(digitalPinToInterrupt(port_id), check_all_devices_online, RISING);
 	}
 	
 	void unset_pin_to_check_devices(const int port_id)
 	{		
+		_plogf("[CS] Reset pin port %i, not triggering check for new devices anymore\n", port_id);
 		detachInterrupt(digitalPinToInterrupt(port_id));
 	}
 
@@ -345,6 +370,22 @@ namespace CustomSerial {
 	{
 		const auto& dl = get_devices_list();
 		return dl.has_any_online();
+	}
+	
+	inline void print_info() {
+		_plogf(
+		  "[CS] |  Custom Serial information  |\n"
+		  "[CS] ===============================\n"
+		  "[CS] - Version: %s\n"
+		  "[CS] - I2C baud speed: %i\n"
+		  "[CS] - Packages limit: %zu (%zu bytes)\n"
+		  "[CS] - Default ports (LED, SDA, SCL): %i, %i, %i\n"
+		  "[CS] ===============================\n", 
+		  versioning,
+		  port_speed_baud,
+		  max_packages_at_once, max_packages_at_once * sizeof(command_package), 
+		  default_led_pin, default_port_sda, default_port_scl
+		);	
 	}
 
 }
