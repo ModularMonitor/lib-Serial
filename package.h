@@ -342,18 +342,6 @@ namespace CustomSerial {
 		return device_to_uint8t(device_id::_MAX);
 	}
 
-	void set_pin_to_check_devices(const int port_id)
-	{
-		_plogf("[CS] Set pin port %i as RISING to trigger check for new devices\n", port_id);
-		attachInterrupt(digitalPinToInterrupt(port_id), check_all_devices_online, RISING);
-	}
-	
-	void unset_pin_to_check_devices(const int port_id)
-	{		
-		_plogf("[CS] Reset pin port %i, not triggering check for new devices anymore\n", port_id);
-		detachInterrupt(digitalPinToInterrupt(port_id));
-	}
-
 	bool is_device_connected(device_id id)
 	{
 		const auto& dl = get_devices_list();
