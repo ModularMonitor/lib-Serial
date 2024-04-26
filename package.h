@@ -34,12 +34,12 @@ void on_request_do()
 
 namespace CustomSerial {
 
-    constexpr char versioning[] = "V1.0.0";
+    constexpr char versioning[] = "V1.0.1";
     constexpr int default_led_pin = 2;
     constexpr int default_port_sda = 5;
     constexpr int default_port_scl = 4;
     constexpr int port_speed_baud = 40000;
-    constexpr size_t max_packages_at_once = 16;    
+    constexpr size_t max_packages_at_once = 10;
     
     enum class device_id : uint8_t {
         DHT22_SENSOR,       /* Temperature and Humidity sensor */
@@ -83,35 +83,35 @@ namespace CustomSerial {
     };    
 
     struct command {
-        enum class vtype : uint8_t { INVALID, TD, TF, TI, TU, REQUEST = std::numeric_limits<uint8_t>::max() };
+        enum class vtype : uint8_t { INVALID, TF, TI, TU, REQUEST = std::numeric_limits<uint8_t>::max() };
 
         union _ {
-            double d;
             float f;
-            int64_t i;
-            uint64_t u;
+            int32_t i;
+            uint32_t u;
 
-            _() : d(0.0) {}
-            _(double _d) : d(_d) {}
+            _() : f(0.0f) {}
             _(float _f) : f(_f) {}
-            _(int64_t _i) : i(_i) {}
-            _(uint64_t _u) : u(_u) {}
-            void operator=(double _d) { d = _d; }
+            _(int32_t _i) : i(_i) {}
+            _(uint32_t _u) : u(_u) {}
             void operator=(float _f) { f = _f; }
-            void operator=(int64_t _i) { i = _i; }
-            void operator=(uint64_t _u) { u = _u; }
+            void operator=(int32_t _i) { i = _i; }
+            void operator=(uint32_t _u) { u = _u; }
         };
 
     private:
-        char path[16]{};
         _ m_val{0.0f};
+        char path[16]{};
         uint8_t m_id = 0;
         uint8_t m_type = static_cast<uint8_t>(vtype::INVALID);
 
-        void _set_val(double _d)   { m_val = _d; m_type = static_cast<uint8_t>(vtype::TD); }
         void _set_val(float _f)    { m_val = _f; m_type = static_cast<uint8_t>(vtype::TF); }
-        void _set_val(int64_t _i)  { m_val = _i; m_type = static_cast<uint8_t>(vtype::TI); }
-        void _set_val(uint64_t _u) { m_val = _u; m_type = static_cast<uint8_t>(vtype::TU); }
+        void _set_val(int32_t _i)  { m_val = _i; m_type = static_cast<uint8_t>(vtype::TI); }
+        void _set_val(uint32_t _u) { m_val = _u; m_type = static_cast<uint8_t>(vtype::TU); }
+        // quick fix:
+        void _set_val(double _f)   { m_val = static_cast<float>(_f);    m_type = static_cast<uint8_t>(vtype::TF); }
+        void _set_val(int64_t _i)  { m_val = static_cast<int32_t>(_i);  m_type = static_cast<uint8_t>(vtype::TI); }
+        void _set_val(uint64_t _u) { m_val = static_cast<uint32_t>(_u); m_type = static_cast<uint8_t>(vtype::TU); }
     public:        
         command() = default;
 
@@ -135,7 +135,13 @@ namespace CustomSerial {
         const _& get_val() const { return m_val; }
         vtype get_val_type() const { return static_cast<vtype>(m_type); }
 
-        bool valid() const { return  m_type != static_cast<uint8_t>(vtype::INVALID); }
+        bool valid() const {
+            return 
+                m_type == static_cast<uint8_t>(vtype::TF) ||
+                m_type == static_cast<uint8_t>(vtype::TI) ||
+                m_type == static_cast<uint8_t>(vtype::TU) ||
+                m_type == static_cast<uint8_t>(vtype::REQUEST);
+        }
     };
 
     struct command_package {
@@ -366,12 +372,12 @@ namespace CustomSerial {
           "[CS] ===============================\n"
           "[CS] - Version: %s\n"
           "[CS] - I2C baud speed: %i\n"
-          "[CS] - Packages limit: %zu (%zu bytes)\n"
+          "[CS] - Packages limit: %zu (%zu bytes, %zu per command)\n"
           "[CS] - Default ports (LED, SDA, SCL): %i, %i, %i\n"
           "[CS] ===============================\n", 
           versioning,
           port_speed_baud,
-          max_packages_at_once, max_packages_at_once * sizeof(command_package), 
+          max_packages_at_once, sizeof(command_package), sizeof(command), 
           default_led_pin, default_port_sda, default_port_scl
         );    
     }
