@@ -82,7 +82,10 @@ namespace CS {
             logf("Checking devices available until at least one answers... \n");
             uint8_t devices_on = 0;
             do {
-                for(uint8_t p = 0; p < static_cast<uint8_t>(device_id::_MAX); ++p) {                    
+                for(uint8_t p = 0; p < static_cast<uint8_t>(device_id::_MAX); ++p) {
+#ifdef _DEBUG
+                    logf("[DEBUG] Step %hu of %hu, sending ping...\n", (uint16_t)p, static_cast<uint16_t>(device_id::_MAX));
+#endif
                     Request req(false);
                     // set request offset
                     Wire1.beginTransmission(m_id_requesting);
@@ -208,8 +211,13 @@ namespace CS {
     {
         SlaveDevice* sd = (SlaveDevice*)SlaveDevice::_get_singleton();
         if (!sd) return;
-
+#ifdef _DEBUG
+        sd->logf("__handle_request_slave got request, handling it...\n");
+#endif
         sd->_handle_request();
+#ifdef _DEBUG
+        sd->logf("__handle_request_slave handled.\n");
+#endif
     }
 
     // MUST NOT RESPOND
@@ -218,11 +226,18 @@ namespace CS {
         SlaveDevice* sd = (SlaveDevice*)SlaveDevice::_get_singleton();
         if (!sd) return;
 
+#ifdef _DEBUG
+        sd->logf("__handle_receive_slave Working on received data....\n");
+#endif
         sd->_toggle_led();
 
         Request req(true);
 
         sd->m_last_receive = req;
+        
+#ifdef _DEBUG
+        sd->logf("__handle_receive_slave Worked on received data. Stored. Ready.\n");
+#endif
     }
 
 }
