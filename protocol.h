@@ -15,7 +15,7 @@ namespace CS {
     enum class device_id : uint8_t {
         DHT22_SENSOR,       /* Temperature and Humidity sensor */
         MICS_6814_SENSOR,   /* CO, NH3 and NO2 sensor */
-        KY038_HW038_SENSOR, /* Loudness and lightness sensor */
+        LY038_HW072_SENSOR, /* Loudness and lightness sensor */
         GY87_SENSOR,        /* Accelerometer, temperature, pressure, altitude and compass sensor */
         CCS811_SENSOR,      /* Quality of air sensor */
         PMSDS011_SENSOR,    /* Nova PM sensor */        
@@ -28,7 +28,7 @@ namespace CS {
         switch(id) {
         case device_id::DHT22_SENSOR:       return "DHT22_SENSOR";
         case device_id::MICS_6814_SENSOR:   return "MICS_6814_SENSOR";
-        case device_id::KY038_HW038_SENSOR: return "KY038_HW038_SENSOR";
+        case device_id::LY038_HW072_SENSOR: return "LY038_HW072_SENSOR";
         case device_id::GY87_SENSOR:        return "GY87_SENSOR";
         case device_id::CCS811_SENSOR:      return "CCS811_SENSOR";
         case device_id::PMSDS011_SENSOR:    return "PMSDS011_SENSOR";
