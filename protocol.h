@@ -104,11 +104,13 @@ namespace CS {
             return true;
         }
         
-        void _master_send(device_id to, const char* data, const uint8_t len) {
-            CS_LOGF("_ master send to=%hu len=%hu\n", (uint16_t)d2u(to), (uint16_t)len);
+        bool _master_send(device_id to, const char* data, const uint8_t len) {
+            CS_LOGF("_ master send to=%hu len=%hu ...", (uint16_t)d2u(to), (uint16_t)len);
             Wire1.beginTransmission(d2u(to));
             _write(data, len);
-            Wire1.endTransmission(true);
+            const int res = Wire1.endTransmission(true);
+            CS_LOGF("result %i\n", res);
+            return res == 0;
         }
         
         bool _master_request_and_read_from(device_id from, char* data, const uint8_t len) {
@@ -117,7 +119,7 @@ namespace CS {
             //    CS_LOGF("_ master req read try #%zu\n", p);
             //}
             if (Wire1.requestFrom(d2u(from), (size_t)len, true) != (int)len) return false;
-            delay(10);
+            delay(1);
             return _read(data, len);
         }
         
@@ -200,7 +202,12 @@ namespace CS {
             m_buffer.len = data_len;
             
             // send if something to send
-            if (data && data_len > 0) _master_send(to,(char*)&m_buffer, m_buffer.len + 1);
+            if (data && data_len > 0) {
+                if (!_master_send(to,(char*)&m_buffer, m_buffer.len + 1)) {
+                    CS_LOGF("_master_send on master_do failed\n");
+                    return false;
+                }
+            }
             //_master_flush();
             delay(1);
             // read if buffer to recv
