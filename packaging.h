@@ -3,7 +3,7 @@
 
 namespace CS {
     
-    constexpr size_t max_path_len = 32;
+    constexpr size_t max_path_len = 128;
     constexpr size_t max_requests = 50;
     
     class PackagedWired;
