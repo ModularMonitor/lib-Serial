@@ -15,7 +15,7 @@ namespace CS {
     enum class device_id : uint8_t {
         DHT22_SENSOR,       /* Temperature and Humidity sensor */
         MICS_6814_SENSOR,   /* CO, NH3 and NO2 sensor */
-        LY038_HW072_SENSOR, /* Loudness and lightness sensor */
+        KY038_HW038_SENSOR, /* Loudness and lightness sensor */
         GY87_SENSOR,        /* Accelerometer, temperature, pressure, altitude and compass sensor */
         CCS811_SENSOR,      /* Quality of air sensor */
         PMSDS011_SENSOR,    /* Nova PM sensor */        
@@ -28,7 +28,7 @@ namespace CS {
         switch(id) {
         case device_id::DHT22_SENSOR:       return "DHT22_SENSOR";
         case device_id::MICS_6814_SENSOR:   return "MICS_6814_SENSOR";
-        case device_id::LY038_HW072_SENSOR: return "LY038_HW072_SENSOR";
+        case device_id::KY038_HW038_SENSOR: return "KY038_HW038_SENSOR";
         case device_id::GY87_SENSOR:        return "GY87_SENSOR";
         case device_id::CCS811_SENSOR:      return "CCS811_SENSOR";
         case device_id::PMSDS011_SENSOR:    return "PMSDS011_SENSOR";
@@ -105,21 +105,22 @@ namespace CS {
         }
         
         bool _master_send(device_id to, const char* data, const uint8_t len) {
+            _led(true);
             CS_LOGF("_ master send to=%hu len=%hu ...", (uint16_t)d2u(to), (uint16_t)len);
             Wire1.beginTransmission(d2u(to));
             _write(data, len);
             const int res = Wire1.endTransmission(true);
             CS_LOGF("result %i\n", res);
+            _led(false);
             return res == 0;
         }
         
         bool _master_request_and_read_from(device_id from, char* data, const uint8_t len) {
+            _led(true);
             CS_LOGF("_ master req read from=%hu len=%hu\n", (uint16_t)d2u(from), (uint16_t)len);
-            //for(size_t p = 0; p < 10 && Wire1.requestFrom(d2u(from), (size_t)len, true) != (int)len; ++p) {
-            //    CS_LOGF("_ master req read try #%zu\n", p);
-            //}
             if (Wire1.requestFrom(d2u(from), (size_t)len, true) != (int)len) return false;
             delay(1);
+            _led(false);
             return _read(data, len);
         }
         
@@ -128,11 +129,6 @@ namespace CS {
             _write(data, len);
         }
         // = = = ENDOF LOGIC PART = = = //
-        
-        //void _master_flush()
-        //{
-        //    while(Wire1.available()) Wire1.read();
-        //}
         
         void _slave_internal_store_auto(const int event_got)
         {
@@ -237,13 +233,7 @@ namespace CS {
         CS_LOGF("Received %i bytes...\n", received_bytes);
         wired->_slave_internal_store_auto(received_bytes);
         wired->_slave_internal_triggered_request();
+        wired->toggle_led();
     }
-    
-    //inline void __wired_request_handler()
-    //{
-    //    Wired* wired = Wired::get_singleton();
-    //    wired->_slave_internal_triggered_request();
-    //    CS_LOGF("Received request. Wrote back.\n");
-    //}
     
 }
