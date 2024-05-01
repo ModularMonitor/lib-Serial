@@ -1,6 +1,7 @@
 #pragma once
 
 #include "protocol.h"
+#include "flags.h"
 #include <deque>
 
 namespace CS {
@@ -120,6 +121,42 @@ namespace CS {
                 Command cmd = master_do(to, req);
                 if (!cmd.valid()) break;
                 cmds.push_back(cmd);
+            }
+            
+            return cmds;
+        }
+        
+        std::deque<Command> master_smart_request_all(device_id to, FlagWrapper& fw)
+        {
+            std::deque<Command> cmds;
+            
+            const auto autofill_rest = [&]{
+                for(size_t p = 1; p < max_requests; ++p)
+                {
+                    Requester req(p);
+                    Command cmd = master_do(to, req);
+                    if (!cmd.valid()) break;
+                    cmds.push_back(cmd);
+                }
+            };
+            
+            Requester req(0);
+            Command cmd = master_do(to, req);
+            
+            if (!cmd.valid()) return cmds;
+            
+            // if, supports  
+            if (strcmp("#FLAGS", cmd.get_path()) == 0 && cmd.get_type() == Command::vtype::TU)
+            {
+                fw = FlagWrapper(cmd.get_val<uint64_t>());
+                if (fw & device_flags::HAS_NEW_DATA) {
+                    autofill_rest(); // only autofill if has new data
+                }
+                // it should not care about errors here.
+            }            
+            else { // no support
+                cmds.push_back(cmd);
+                autofill_rest();
             }
             
             return cmds;
