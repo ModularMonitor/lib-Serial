@@ -126,7 +126,7 @@ namespace CS {
             return cmds;
         }
         
-        std::deque<Command> master_smart_request_all(device_id to, FlagWrapper& fw)
+        std::deque<Command> master_smart_request_all(device_id to, FlagWrapper& fw, bool& answered)
         {
             std::deque<Command> cmds;
             
@@ -143,7 +143,11 @@ namespace CS {
             Requester req(0);
             Command cmd = master_do(to, req);
             
-            if (!cmd.valid()) return cmds;
+            if (!cmd.valid()) {
+                answered = false;
+                return cmds;
+            }
+            answered = true;
             
             // if, supports  
             if (strcmp("#FLAGS", cmd.get_path()) == 0 && cmd.get_type() == Command::vtype::TU)
