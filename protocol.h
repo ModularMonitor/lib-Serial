@@ -1,3 +1,5 @@
+#pragma once
+
 #include <Arduino.h>
 #include <Wire.h>
 
@@ -23,8 +25,8 @@ namespace CS {
         _MAX                /* MAX to limit testing of devices */
     };
     
-    constexpr uint8_t d2u(device_id id) { return static_cast<uint8_t>(id); }
-    const char* d2str(device_id id) {
+    inline constexpr uint8_t d2u(device_id id) { return static_cast<uint8_t>(id); }
+    inline const char* d2str(device_id id) {
         switch(id) {
         case device_id::DHT22_SENSOR:       return "DHT22_SENSOR";
         case device_id::MICS_6814_SENSOR:   return "MICS_6814_SENSOR";
